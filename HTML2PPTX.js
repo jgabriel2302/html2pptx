@@ -104,16 +104,17 @@ class HTML2PPTX {
    * @summary Converts DOM slides into PPTX slides.
    * @description Iterates over SVG nodes, converting each to pptxgen shapes/text. Can append to an existing presentation.
    * @param {Iterable<SVGElement>|SVGElement|null} slidesSvg Collection of SVG elements or a single SVG node.
+   * @param {Boolean} [autoDownload=true] Write and download pptx file automatically
    * @param {PptxGenJS|null} [recycle=null] Existing pptxgen instance used to append slides; when omitted a new instance is created and written to disk.
    * @returns {PptxGenJS} The pptxgen presentation instance, useful when chaining additional operations.
    */
-  generate(slidesSvg, recycle = null) {
+  generate(slidesSvg, autoDownload = true, recycle = null) {
     const pptx = recycle ?? this.#createPresentation();
     const nodes = this.#normalizeSlides(slidesSvg);
     for (const svg of nodes) {
       this.#renderSlide(pptx, svg);
     }
-    if (!recycle) {
+    if (!autoDownload) {
       pptx.writeFile({ fileName: this.fileName });
     }
     return pptx;
