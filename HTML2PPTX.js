@@ -452,23 +452,15 @@ class HTML2PPTX {
       const clone = element.cloneNode(true);
       const svgWidth = Math.max(1, rect.width);
       const svgHeight = Math.max(1, rect.height);
-      const transformRect = this.#parseTransformRect(
-        rect,
-        element,
-        context
-      );
-      const viewBoxRect = this.#rectToViewBoxRect(
-        transformRect ?? rect,
-        context
-      );
       const adjustedViewBox = this.#applyInverseTransform(
-        viewBoxRect,
+        rect,
         element
       );
       const viewBoxAttr = `${adjustedViewBox.x} ${adjustedViewBox.y} ${Math.max(
         1,
         adjustedViewBox.width
       )} ${Math.max(1, adjustedViewBox.height)}`;
+      clone.style.transform = '';
       temp.innerHTML = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="${viewBoxAttr}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${clone.outerHTML}</svg>`;
       const datauri = HTML2PPTX.svgToDataURI(temp.firstElementChild);
       slide.addImage(
@@ -877,8 +869,9 @@ class HTML2PPTX {
           .replace(')', '')
           .split(/[ ,]+/)
           .map((value) => parseFloat(value));
-        x -= Number.isFinite(values[0]) ? values[0] : 0;
-        y -= Number.isFinite(values[1]) ? values[1] : 0;
+        x = 0; y = 0;
+        x = -1 * (Number.isFinite(values[0]) ? values[0] : 0);
+        y = -1 * (Number.isFinite(values[1]) ? values[1] : 0);
       } else if (transformPart.startsWith('scale')) {
         const values = transformPart
           .replace(/[a-z]+\(/i, '')
@@ -1100,7 +1093,7 @@ class HTML2PPTX {
     const height = Number.isFinite(rect?.height) ? rect.height : pxRadius * 2;
     const reference = 1//Math.max(1, Math.min(width, height));
     const normalized = pxRadius / (reference / 2);
-    return Math.max(0, Math.min(1, normalized)) * 0.15;
+    return Math.max(0, Math.min(1, normalized)) * 0.05;
   }
 
   /**
