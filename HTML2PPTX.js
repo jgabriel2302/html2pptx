@@ -289,7 +289,7 @@ class HTML2PPTX {
     );
     const context = { svgRect, viewBox, slide, slideSizing, svg };
     const elements = svg.querySelectorAll(
-      'text,rect,circle,line,g[name],div,li,td'
+      'text,rect,circle,line,path,polygon,g[name],div,li,td'
     );
     for (const element of elements) {
       this.#renderElement(element, context, pptx);
@@ -442,6 +442,31 @@ class HTML2PPTX {
           w: metrics.w,
           fill: this.#solidFill(colors.fill),
           ...this.#lineOptions(colors.stroke, borderWidth, dashType),
+        })
+      );
+      return;
+    }
+
+    if (tag === 'POLYGON' || tag === 'PATH') {
+      const temp = document.createElement('div');
+      const clone = element.cloneNode(true);
+      const svgWidth = Math.max(1, rect.width);
+      const svgHeight = Math.max(1, rect.height);
+      const viewBoxRect = this.#rectToViewBoxRect(rect, context);
+      const viewBoxAttr = `${viewBoxRect.x} ${viewBoxRect.y} ${Math.max(
+        1,
+        viewBoxRect.width
+      )} ${Math.max(1, viewBoxRect.height)}`;
+      temp.innerHTML = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="${viewBoxAttr}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${clone.outerHTML}</svg>`;
+      const datauri = HTML2PPTX.svgToDataURI(temp.firstElementChild);
+      slide.addImage(
+        this.#applyPercentPosition({
+          data: datauri,
+          x: metrics.x,
+          y: metrics.y,
+          h: metrics.h,
+          w: metrics.w,
+          sizing: { type: 'contain' },
         })
       );
       return;
@@ -760,6 +785,7 @@ class HTML2PPTX {
       return null;
     }
   }
+
 
   /**
    * @summary Translates inline DOM nodes into pptxgen text runs.
@@ -1147,6 +1173,49 @@ class HTML2PPTX {
       w: this.#round((viewW / safeViewWidth) * this.slideWidthEmu),
       h: this.#round((viewH / safeViewHeight) * this.slideHeightEmu),
     };
+  }
+
+  /**
+   * @summary Converts a DOMRect into the original SVG viewBox coordinate system.
+   * @private
+   * @inner
+   * @param {{x:number,y:number,width:number,height:number,coordinateSpace?:'svg'|'screen'}} rect Bounding rectangle.
+   * @param {{svgRect: DOMRect, viewBox: {minX:number,minY:number,width:number,height:number}}} context Slide context.
+   * @returns {{x:number,y:number,width:number,height:number}} Rectangle expressed in viewBox units.
+   */
+  #rectToViewBoxRect(rect, context) {
+    if (rect.coordinateSpace === 'svg') {
+      return {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      };
+    }
+    const { svgRect, viewBox } = context;
+    const safeDomWidth = svgRect.width || 1;
+    const safeDomHeight = svgRect.height || 1;
+    const rectX = rect.x ?? rect.left ?? 0;
+    const rectY = rect.y ?? rect.top ?? 0;
+    const svgX = svgRect.x ?? svgRect.left ?? 0;
+    const svgY = svgRect.y ?? svgRect.top ?? 0;
+    const rectWidth =
+      rect.width ??
+      Math.max(0, (rect.right ?? rectX) - (rect.left ?? rectX));
+    const rectHeight =
+      rect.height ??
+      Math.max(0, (rect.bottom ?? rectY) - (rect.top ?? rectY));
+    const viewWidth = viewBox.width || safeDomWidth;
+    const viewHeight = viewBox.height || safeDomHeight;
+    const domToViewBoxX = (value) =>
+      (value / safeDomWidth) * viewWidth;
+    const domToViewBoxY = (value) =>
+      (value / safeDomHeight) * viewHeight;
+    const viewX = domToViewBoxX(rectX - svgX) + (viewBox.minX ?? 0);
+    const viewY = domToViewBoxY(rectY - svgY) + (viewBox.minY ?? 0);
+    const viewW = domToViewBoxX(rectWidth);
+    const viewH = domToViewBoxY(rectHeight);
+    return { x: viewX, y: viewY, width: viewW, height: viewH };
   }
 
   /**
