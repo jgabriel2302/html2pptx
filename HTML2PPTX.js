@@ -21,7 +21,7 @@ class HTML2PPTX {
    * @returns {number} Stroke width threshold measured in EMU.
    */
   static get STROKE_LIMIT() {
-    return 0.013683353027016402;
+    return 9525;
   }
 
   /**
@@ -73,6 +73,7 @@ class HTML2PPTX {
    * @param {string} [options.locale='pt-BR'] Locale used for date/time formatting.
    * @param {HTMLElement} [options.editor] Container used to detect elements hidden only during presentation preview.
    * @param {{name?: string, width?: number, height?: number}} [options.layout] PPTX layout definition (in inches).
+   * @param {'fit'|'viewport'} [options.slideSizing='fit'] Defines whether the SVG is scaled to fit the slide (`'fit'`) or if its viewport is treated as the slide bounds (`'viewport'`).
    * @property {number} slideWidthEmu Width of the slide in EMUs derived from the layout.
    * @property {number} slideHeightEmu Height of the slide in EMUs derived from the layout.
    */
@@ -89,13 +90,14 @@ class HTML2PPTX {
       (typeof document !== 'undefined'
         ? document.getElementById('result')
         : null);
-    this.layout = {
+   this.layout = {
       name: options.layout?.name ?? 'HTMLTOPPTX-16x9',
       width: options.layout?.width ?? 20,
       height: options.layout?.height ?? 11.25,
     };
-    this.slideWidthEmu = this.layout.width * HTML2PPTX.EMU_PER_IN;
-    this.slideHeightEmu = this.layout.height * HTML2PPTX.EMU_PER_IN;
+   this.slideWidthEmu = this.layout.width * HTML2PPTX.EMU_PER_IN;
+   this.slideHeightEmu = this.layout.height * HTML2PPTX.EMU_PER_IN;
+   this.slideSizing = this.#normalizeSlideSizing(options.slideSizing);
   }
 
   /**
@@ -157,23 +159,140 @@ class HTML2PPTX {
   }
 
   /**
+   * @summary Resolves the most appropriate bounding rectangle for a DOM element.
+   * @private
+   * @inner
+   * @param {Element} element Target element.
+   * @param {{slideSizing: 'fit'|'viewport', svgRect: DOMRect, viewBox: {minX:number,minY:number,width:number,height:number}, svg: SVGElement}} context Rendering context.
+   * @returns {{x:number,y:number,width:number,height:number,coordinateSpace:'svg'|'screen'}} Rectangle in SVG or screen coordinates.
+   */
+  #resolveElementRect(element, context) {
+    if (context.slideSizing === 'viewport') {
+      const svgRect = this.#getSvgRect(element, context);
+      if (svgRect) return svgRect;
+    }
+    const clientRect = this.#getClientRect(element);
+    if (clientRect) return clientRect;
+    const rect = element.getBoundingClientRect();
+    return {
+      x: rect.x ?? rect.left ?? 0,
+      y: rect.y ?? rect.top ?? 0,
+      width:
+        rect.width ??
+        Math.max(
+          0,
+          (rect.right ?? rect.left ?? 0) - (rect.left ?? rect.x ?? 0)
+        ),
+      height:
+        rect.height ??
+        Math.max(
+          0,
+          (rect.bottom ?? rect.top ?? 0) - (rect.top ?? rect.y ?? 0)
+        ),
+      coordinateSpace: 'screen',
+    };
+  }
+
+  /**
+   * @summary Normalizes the slide sizing mode coming from options or dataset attributes.
+   * @private
+   * @inner
+   * @param {string} [mode='fit'] Desired mode.
+   * @default 'fit'
+   * @returns {'fit'|'viewport'} Sanitized mode string.
+   */
+  #normalizeSlideSizing(mode) {
+    if (typeof mode === 'string') {
+      const normalized = mode.trim().toLowerCase();
+      if (normalized === 'viewport' || normalized === 'fit') {
+        return normalized;
+      }
+    }
+    return 'fit';
+  }
+
+  /**
+   * @summary Attempts to compute the bounding box of an element in the parent SVG coordinate space.
+   * @private
+   * @inner
+   * @param {Element} element Target SVG/HTML element.
+   * @param {{svgRect: DOMRect, viewBox: {minX:number,minY:number,width:number,height:number}, svg: SVGElement}} context Slide context.
+   * @returns {{x:number,y:number,width:number,height:number,coordinateSpace:'svg'}|null} Bounding rectangle or null when unavailable.
+   */
+  #getSvgRect(element, context) {
+    if (
+      !(element instanceof SVGElement) ||
+      typeof element.getBBox !== 'function' ||
+      typeof element.getScreenCTM !== 'function' ||
+      typeof DOMPoint !== 'function'
+    ) {
+      return null;
+    }
+    try {
+      const bbox = element.getBBox();
+      const matrix = element.getScreenCTM();
+      if (!bbox || !matrix) return null;
+
+      const corners = [
+        new DOMPoint(bbox.x, bbox.y),
+        new DOMPoint(bbox.x + bbox.width, bbox.y),
+        new DOMPoint(bbox.x, bbox.y + bbox.height),
+        new DOMPoint(bbox.x + bbox.width, bbox.y + bbox.height),
+      ].map((point) => point.matrixTransform(matrix));
+      const xs = corners.map((point) => point.x);
+      const ys = corners.map((point) => point.y);
+
+      const minDomX = Math.min(...xs);
+      const minDomY = Math.min(...ys);
+      const maxDomX = Math.max(...xs);
+      const maxDomY = Math.max(...ys);
+
+      const { svgRect, viewBox } = context;
+      const domWidth = svgRect.width || 1;
+      const domHeight = svgRect.height || 1;
+      const domToViewX = (value) =>
+        (value / domWidth) * (viewBox.width || domWidth);
+      const domToViewY = (value) =>
+        (value / domHeight) * (viewBox.height || domHeight);
+
+      const viewX = domToViewX(minDomX - (svgRect.x ?? svgRect.left ?? 0)) + (viewBox.minX ?? 0);
+      const viewY = domToViewY(minDomY - (svgRect.y ?? svgRect.top ?? 0)) + (viewBox.minY ?? 0);
+      const viewW = domToViewX(maxDomX - minDomX);
+      const viewH = domToViewY(maxDomY - minDomY);
+
+      return {
+        x: viewX,
+        y: viewY,
+        width: viewW,
+        height: viewH,
+        coordinateSpace: 'svg',
+      };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
    * @summary Creates a PPTX slide and processes relevant SVG children preserving the aspect ratio.
    * @private
    * @inner
    * @param {PptxGenJS} pptx Target pptxgen presentation.
-   * @param {SVGElement} svg Source SVG element representing a slide.
+   * @param {SVGElement} svg Source SVG element representing a slide. Supports a `data-slide-sizing="viewport|fit"` attribute to override the global behavior.
    * @returns {void}
    */
   #renderSlide(pptx, svg) {
     const slide = pptx.addSlide();
     const svgRect = svg.getBoundingClientRect();
     const viewBox = this.#getViewBox(svg, svgRect);
-    const context = { svgRect, viewBox, slide };
+    const slideSizing = this.#normalizeSlideSizing(
+      svg.dataset?.slideSizing ?? this.slideSizing
+    );
+    const context = { svgRect, viewBox, slide, slideSizing, svg };
     const elements = svg.querySelectorAll(
-      'text,rect,g[name],div,li,td'
+      'text,rect,circle,line,g[name],div,li,td'
     );
     for (const element of elements) {
-      this.#renderElement(element, context);
+      this.#renderElement(element, context, pptx);
     }
   }
 
@@ -182,14 +301,19 @@ class HTML2PPTX {
    * @private
    * @inner
    * @param {Element} element DOM element being exported.
-   * @param {{svgRect: DOMRect, viewBox: {minX:number,minY:number,width:number,height:number}, slide: PptxGenJS.Slide}} context Precomputed slide context.
+   * @param {{svgRect: DOMRect, viewBox: {minX:number,minY:number,width:number,height:number}, slideSizing: 'fit'|'viewport', slide: PptxGenJS.Slide, svg: SVGElement}} context Precomputed slide context.
+   * @param {PptxGenJS} pptx 
    * @returns {void}
    */
-  #renderElement(element, context) {
+  #renderElement(element, context, pptx) {
     if (this.#shouldSkipElement(element)) return;
 
-    const rect = this.#getClientRect(element) ?? element.getBoundingClientRect();
-    const metrics = this.#rectToSlideMetrics(rect, context);
+    const rect = this.#resolveElementRect(element, context);
+    const metrics = this.#normalizeMetrics(
+      this.#rectToSlideMetrics(rect, context),
+      context
+    );
+    if (metrics.w <= 0 || metrics.h <= 0) return;
     const style = window.getComputedStyle(element);
     if (HTML2PPTX.isHidden(element)) return;
 
@@ -203,39 +327,47 @@ class HTML2PPTX {
     const dashType = style.getPropertyValue('stroke-dasharray')
       ? 'dashDot'
       : 'solid';
-    const radius = this.#resolveRadius(element, style);
+    const radius = this.#resolveRadius(element, style, rect);
+    const textMetrics = this.#textBoxMetrics(metrics, style);
 
     const tag = element.tagName.toUpperCase();
     const name = element.getAttribute('name');
     const slide = context.slide;
 
     if (name === '@updateDate') {
+      const dateBounds = {
+        x: textMetrics.x,
+        y: textMetrics.y,
+        h: textMetrics.h,
+        w: textMetrics.w * 2,
+      };
       const dateOptions = {
-        x: metrics.x,
-        y: metrics.y,
-        h: metrics.h,
-        w: metrics.w * 2,
+        ...this.#applyPercentPosition(dateBounds),
+        h: dateBounds.h,
+        w: dateBounds.w,
         breakLine: false,
-        color: colors.fill,
+        color: colors.fill.hex,
         fontFace: font.fontFace,
         fontSize: font.fontSize,
         bold: font.bold,
         ...alignment,
       };
-      slide.addText(this.#formatDate(), {
-        ...dateOptions,
-        x: this.#alignX(dateOptions, metrics),
-      });
+      slide.addText(
+        this.#formatDate(),
+        this.#applyPercentPosition({
+          ...dateOptions,
+          x: this.#alignX(dateOptions, dateBounds),
+        })
+      );
       return;
     }
 
     if (name === '@pageNumber') {
       slide.slideNumber = {
-        x: metrics.x,
-        y: metrics.y,
+        ...this.#applyPercentPosition(textMetrics),
         fontFace: font.fontFace,
         fontSize: font.fontSize,
-        color: colors.fill,
+        color: colors.fill.hex,
       };
       return;
     }
@@ -247,55 +379,86 @@ class HTML2PPTX {
         `${metrics.x} ${metrics.y} ${rect.width} ${rect.height}`;
       temp.innerHTML = `<svg width="${rect.width}" height="${rect.height}" viewBox="${viewBoxAttr}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" overflow="hidden">${element.innerHTML}</svg>`;
       const datauri = HTML2PPTX.svgToDataURI(temp.firstElementChild);
-      slide.addImage({
-        data: datauri,
-        x: metrics.x,
-        y: metrics.y,
-        h: metrics.h,
-        w: metrics.w,
-        altText: 'Logo ArcelorMittal',
-        sizing: { type: 'contain' },
-      });
+      slide.addImage(
+        this.#applyPercentPosition({
+          data: datauri,
+          x: metrics.x,
+          y: metrics.y,
+          h: metrics.h,
+          w: metrics.w,
+          altText: 'Logo ArcelorMittal',
+          sizing: { type: 'contain' },
+        })
+      );
       return;
     }
 
     if (tag === 'TEXT') {
       const textShape = {
         shape: pptx.ShapeType.rect,
-        x: metrics.x,
-        y: metrics.y,
-        h: metrics.h,
-        w: metrics.w,
+        ...this.#applyPercentPosition({
+          x: textMetrics.x - this.#pxToEmu(2.5),
+          y: textMetrics.y,
+        }),
+        h: textMetrics.h,
+        w: textMetrics.w + this.#pxToEmu(5),
         breakLine: false,
-        color: colors.fill,
+        color: colors.fill.hex,
         fontFace: font.fontFace,
         fontSize: font.fontSize,
         bold: font.bold,
+        margin: 0,
         ...alignment,
       };
       slide.addText(String(element.textContent).trim(), {
         ...textShape,
-        x: this.#alignX(textShape, metrics),
+        ...this.#applyPercentPosition({
+          x: this.#alignX(textShape, textMetrics),
+        }),
       });
+      return;
+    }
+
+    if (tag === 'LINE') {
+      const linePoints = this.#resolveLinePoints(element, context);
+      if (!linePoints) return;
+      const lineShape = {
+        ...this.#applyPercentPosition(linePoints.start),
+        w: linePoints.end.x - linePoints.start.x,
+        h: linePoints.end.y - linePoints.start.y,
+        ...this.#lineOptions(colors.stroke, borderWidth, dashType),
+      };
+      slide.addShape(pptx.ShapeType.line, lineShape);
+      return;
+    }
+
+    if (tag === 'CIRCLE') {
+      slide.addShape(
+        pptx.ShapeType.ellipse,
+        this.#applyPercentPosition({
+          x: metrics.x,
+          y: metrics.y,
+          h: metrics.h,
+          w: metrics.w,
+          fill: this.#solidFill(colors.fill),
+          ...this.#lineOptions(colors.stroke, borderWidth, dashType),
+        })
+      );
       return;
     }
 
     if (tag === 'RECT') {
       slide.addShape(
         radius === 0 ? pptx.ShapeType.rect : pptx.ShapeType.roundRect,
-        {
+        this.#applyPercentPosition({
           x: metrics.x,
           y: metrics.y,
           h: metrics.h,
           w: metrics.w,
-          fill: {
-            color: colors.fill,
-            transparency: colors.fill === '#000000' ? 100 : 0,
-            type: 'solid',
-          },
+          fill: this.#solidFill(colors.fill),
           ...this.#lineOptions(colors.stroke, borderWidth, dashType),
           ...(radius === 0 ? {} : { rectRadius: radius }),
-        }
+        })
       );
       return;
     }
@@ -306,17 +469,17 @@ class HTML2PPTX {
         y: metrics.y,
         h: metrics.h,
         w: metrics.w,
-        fill: { color: colors.fill },
+        fill: this.#solidFill(colors.fill),
         ...this.#lineOptions(colors.stroke, borderWidth, dashType),
         ...(radius === 0 ? {} : { rectRadius: radius }),
       };
 
       const className = String(element.className);
       if (tag === 'DIV' || tag === 'TD') {
-        slide.addShape(
-          radius === 0 ? pptx.ShapeType.rect : pptx.ShapeType.roundRect,
-          shapeOptions
-        );
+      slide.addShape(
+        radius === 0 ? pptx.ShapeType.rect : pptx.ShapeType.roundRect,
+        this.#applyPercentPosition(shapeOptions)
+      );
       }
 
       if (className.includes('shape-only')) return;
@@ -327,15 +490,18 @@ class HTML2PPTX {
 
       if (textNodes.length === 0) {
         const textOptions = this.#paragraphOptions(
-          metrics,
+          textMetrics,
           font,
           colors.color,
           alignment
         );
-        slide.addText(String(element.textContent).trim(), {
-          ...textOptions,
-          x: this.#alignX(textOptions, metrics),
-        });
+        slide.addText(
+          String(element.textContent).trim(),
+          this.#applyPercentPosition({
+            ...textOptions,
+            x: this.#alignX(textOptions, textMetrics),
+          })
+        );
         return;
       }
 
@@ -350,35 +516,68 @@ class HTML2PPTX {
         const bulletPrefix =
           tag === 'LI' ? [{ text: '•   ' }] : [];
         const textOptions = this.#paragraphOptions(
-          metrics,
+          textMetrics,
           font,
           colors.color,
           alignment
         );
         slide.addText(
           [...bulletPrefix, ...textObjects],
-          {
+          this.#applyPercentPosition({
             ...textOptions,
-            x: this.#alignX(textOptions, metrics),
-          }
+            x: this.#alignX(textOptions, textMetrics),
+          })
         );
       }
     }
   }
 
   /**
-   * @summary Builds pptxgen line configuration.
-   * @description Ignores stroke data when width falls below {@link HTML2PPTX.STROKE_LIMIT}.
+   * @summary Builds a pptxgen solid fill definition honoring alpha transparency.
    * @private
    * @inner
-   * @param {string} color Hex stroke color.
+   * @param {{hex:string,alpha:number}|null} color Fill color descriptor.
+   * @returns {{color:string,transparency:number,type:'solid'}} Solid fill options.
+   */
+ #solidFill(color) {
+    return {
+      color: color?.hex ?? '#000000',
+      transparency: this.#alphaToTransparency(color?.alpha ?? 0),
+      type: 'solid',
+    };
+  }
+
+  /**
+   * @summary Builds pptxgen line configuration, supporting transparent strokes.
+   * @private
+   * @inner
+   * @param {{hex:string,alpha:number}|null} color Stroke color definition.
    * @param {number} width Stroke width in EMU.
    * @param {'solid'|'dashDot'|string} dashType Dash style used for pptxgen.
-   * @returns {{line:{color:string,width:number,dashType:string}}|{}} Line object or empty object when suppressed.
+   * @returns {{line:{color:string,width:number,dashType:string,transparency:number}}|{}} Line object or empty object when suppressed.
    */
   #lineOptions(color, width, dashType) {
     if (!width || width <= HTML2PPTX.STROKE_LIMIT) return {};
-    return { line: { color, width, dashType } };
+    return {
+      line: {
+        color: color?.hex ?? '#000000',
+        width,
+        dashType,
+        transparency: this.#alphaToTransparency(color?.alpha ?? 1),
+      },
+    };
+  }
+
+  /**
+   * @summary Converts normalized alpha (0-1) to pptx transparency percent (0-100).
+   * @private
+   * @inner
+   * @param {number} alpha Alpha channel value (0-1).
+   * @returns {number} Transparency percentage accepted by pptxgen.
+   */
+  #alphaToTransparency(alpha) {
+    const safeAlpha = Number.isFinite(alpha) ? alpha : 1;
+    return Math.round((1 - Math.max(0, Math.min(1, safeAlpha))) * 100);
   }
 
   /**
@@ -397,7 +596,7 @@ class HTML2PPTX {
       y: metrics.y,
       h: metrics.h,
       w: metrics.w,
-      color,
+      color: color?.hex ?? '#000000',
       fontFace: font.fontFace,
       fontSize: font.fontSize,
       bold: font.bold,
@@ -408,6 +607,158 @@ class HTML2PPTX {
       margin: 0,
       fit: 'shrink',
     };
+  }
+
+  /**
+   * @summary Adjusts metrics by CSS margin and padding to align text content with HTML layout.
+   * @private
+   * @inner
+   * @param {{x:number,y:number,w:number,h:number}} metrics Base metrics in EMU.
+   * @param {CSSStyleDeclaration} style Computed style for the element.
+   * @returns {{x:number,y:number,w:number,h:number}} Metrics adjusted for margin/padding.
+   */
+  #textBoxMetrics(metrics, style) {
+    if (!metrics || !style) return metrics;
+    const padding = this.#boxModel(style, 'padding');
+    const margin = this.#boxModel(style, 'margin');
+    const insetLeft = padding.left + margin.left;
+    const insetRight = padding.right + margin.right;
+    const insetTop = padding.top + margin.top;
+    const insetBottom = padding.bottom + margin.bottom;
+    const width = metrics.w - insetLeft - insetRight;
+    const height = metrics.h - insetTop - insetBottom;
+    if (width <= 0 || height <= 0) {
+      return metrics;
+    }
+    return {
+      x: metrics.x + insetLeft,
+      y: metrics.y + insetTop,
+      w: width,
+      h: height,
+    };
+  }
+
+  /**
+   * @summary Applies percent-based coordinates when available, keeping EMU fallbacks otherwise.
+   * @private
+   * @inner
+   * @param {{x?:number|string,y?:number|string,xPercent?:string,yPercent?:string}} options pptxgen position options.
+   * @returns {Object} Updated options ready for pptxgen.
+   */
+  #applyPercentPosition(options) {
+    if (!options) return options;
+    const next = { ...options };
+    if (typeof next.xPercent === 'string') {
+      next.x = next.xPercent;
+    }
+    if (typeof next.yPercent === 'string') {
+      next.y = next.yPercent;
+    }
+    delete next.xPercent;
+    delete next.yPercent;
+    delete next.viewportPercentX;
+    delete next.viewportPercentY;
+    return next;
+  }
+
+  /**
+   * @summary Reads CSS box-model values (margin/padding) converting them to EMU.
+   * @private
+   * @inner
+   * @param {CSSStyleDeclaration} style Computed style.
+   * @param {'margin'|'padding'} prop Box-model prefix.
+   * @returns {{top:number,right:number,bottom:number,left:number}} Box dimensions in EMU.
+   */
+  #boxModel(style, prop) {
+    return {
+      top: this.#pxToEmu(this.#parseLength(style.getPropertyValue(`${prop}-top`))),
+      right: this.#pxToEmu(this.#parseLength(style.getPropertyValue(`${prop}-right`))),
+      bottom: this.#pxToEmu(this.#parseLength(style.getPropertyValue(`${prop}-bottom`))),
+      left: this.#pxToEmu(this.#parseLength(style.getPropertyValue(`${prop}-left`))),
+    };
+  }
+
+  /**
+   * @summary Parses CSS length values returning pixels.
+   * @private
+   * @inner
+   * @param {string} value CSS length.
+   * @returns {number} Parsed value in pixels.
+   */
+  #parseLength(value) {
+    const parsed = parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  /**
+   * @summary Resolves absolute slide coordinates for SVG line endpoints.
+   * @private
+   * @inner
+   * @param {SVGLineElement} element Target line element.
+   * @param {{svgRect: DOMRect, viewBox: {minX:number,minY:number,width:number,height:number}, slideSizing: 'fit'|'viewport'}} context Rendering context.
+   * @returns {{start:{x:number,y:number,xPercent?:string,yPercent?:string},end:{x:number,y:number,xPercent?:string,yPercent?:string}}|null} Start/end slide coordinates.
+   */
+  #resolveLinePoints(element, context) {
+    const x1 = this.#parseLength(element.getAttribute('x1'));
+    const y1 = this.#parseLength(element.getAttribute('y1'));
+    const x2 = this.#parseLength(element.getAttribute('x2'));
+    const y2 = this.#parseLength(element.getAttribute('y2'));
+    if ([x1, y1, x2, y2].some((value) => !Number.isFinite(value))) return null;
+    const start = this.#convertSvgPointToSlide(element, x1, y1, context);
+    const end = this.#convertSvgPointToSlide(element, x2, y2, context);
+    if (!start || !end) return null;
+    return { start, end };
+  }
+
+  /**
+   * @summary Converts an SVG point (in element coordinates) to slide EMU coordinates.
+   * @private
+   * @inner
+   * @param {SVGElement} element Source element.
+   * @param {number} pointX SVG X coordinate.
+   * @param {number} pointY SVG Y coordinate.
+   * @param {{svgRect: DOMRect, slideSizing: 'fit'|'viewport'}} context Rendering context.
+   * @returns {{x:number,y:number,xPercent?:string,yPercent?:string}|null} Slide coordinate descriptor.
+   */
+  #convertSvgPointToSlide(element, pointX, pointY, context) {
+    const svgRoot = element.ownerSVGElement;
+    if (
+      !svgRoot ||
+      typeof svgRoot.createSVGPoint !== 'function' ||
+      typeof element.getScreenCTM !== 'function'
+    ) {
+      return null;
+    }
+    try {
+      const matrix = element.getScreenCTM();
+      if (!matrix) return null;
+      const svgPoint = svgRoot.createSVGPoint();
+      svgPoint.x = pointX;
+      svgPoint.y = pointY;
+      const domPoint = svgPoint.matrixTransform(matrix);
+      const { svgRect } = context;
+      const svgX = svgRect.x ?? svgRect.left ?? 0;
+      const svgY = svgRect.y ?? svgRect.top ?? 0;
+      const safeDomWidth = svgRect.width || 1;
+      const safeDomHeight = svgRect.height || 1;
+      const ratioX = (domPoint.x - svgX) / safeDomWidth;
+      const ratioY = (domPoint.y - svgY) / safeDomHeight;
+      const coordinate = {
+        x: this.#round(ratioX * this.slideWidthEmu),
+        y: this.#round(ratioY * this.slideHeightEmu),
+      };
+      if (context.slideSizing === 'viewport') {
+        if (ratioX < 0 || ratioX > 1) {
+          coordinate.xPercent = (ratioX * 100).toFixed(2) + '%';
+        }
+        if (ratioY < 0 || ratioY > 1) {
+          coordinate.yPercent = (ratioY * 100).toFixed(2) + '%';
+        }
+      }
+      return coordinate;
+    } catch (error) {
+      return null;
+    }
   }
 
   /**
@@ -461,34 +812,84 @@ class HTML2PPTX {
   }
 
   /**
-   * @summary Resolves final fill/stroke/text colors with HTML backgrounds in mind.
+   * @summary Resolves final fill/stroke/text colors with HTML backgrounds and opacity in mind.
    * @private
    * @inner
    * @param {Element} element Current DOM element.
    * @param {CSSStyleDeclaration} style Computed style for the element.
-   * @returns {{background:string,color:string,fill:string,stroke:string}} Color palette for pptxgen.
+   * @returns {{background:{hex:string,alpha:number},color:{hex:string,alpha:number},fill:{hex:string,alpha:number},stroke:{hex:string,alpha:number}}} Color palette for pptxgen.
    */
   #resolveColors(element, style) {
-    const background = HTML2PPTX.toHex(
-      style.getPropertyValue('background-color')
+    const baseOpacity = this.#parseOpacity(style.getPropertyValue('opacity'));
+    const background = this.#applyOpacity(
+      HTML2PPTX.toColor(style.getPropertyValue('background-color')),
+      baseOpacity
     );
-    const textColor = HTML2PPTX.toHex(
-      style.getPropertyValue('color')
+    const textColor = this.#applyOpacity(
+      HTML2PPTX.toColor(style.getPropertyValue('color')),
+      baseOpacity
     );
-    const fill =
-      background !== '#000000' &&
-      !HTML2PPTX.SVG_ELEMENTS.has(element.tagName.toUpperCase())
-        ? background
-        : HTML2PPTX.toHex(style.getPropertyValue('fill'));
-    const borderColor = HTML2PPTX.toHex(
-      style.getPropertyValue('border-color')
+    const fillColor = this.#applyOpacity(
+      HTML2PPTX.toColor(style.getPropertyValue('fill')),
+      this.#parseOpacity(style.getPropertyValue('fill-opacity')) * baseOpacity
     );
-    const stroke =
-      borderColor !== '#000000' &&
-      !HTML2PPTX.SVG_ELEMENTS.has(element.tagName.toUpperCase())
-        ? borderColor
-        : HTML2PPTX.toHex(style.getPropertyValue('stroke'));
+    const strokeColor = this.#applyOpacity(
+      HTML2PPTX.toColor(style.getPropertyValue('stroke')),
+      this.#parseOpacity(style.getPropertyValue('stroke-opacity')) * baseOpacity
+    );
+    const borderColor = this.#applyOpacity(
+      HTML2PPTX.toColor(style.getPropertyValue('border-color')),
+      baseOpacity
+    );
+    const isSvgElement = HTML2PPTX.SVG_ELEMENTS.has(element.tagName.toUpperCase());
+    const fill = !isSvgElement && this.#hasVisibleColor(background)
+      ? background
+      : fillColor;
+    const stroke = !isSvgElement && this.#hasVisibleColor(borderColor)
+      ? borderColor
+      : strokeColor;
     return { background, color: textColor, fill, stroke };
+  }
+
+  /**
+   * @summary Parses CSS opacity values, falling back to `1`.
+   * @private
+   * @inner
+   * @param {string} value CSS opacity value.
+   * @returns {number} Normalized opacity between 0 and 1.
+   */
+  #parseOpacity(value) {
+    const parsed = parseFloat(value);
+    if (Number.isNaN(parsed)) return 1;
+    return Math.max(0, Math.min(1, parsed));
+  }
+
+  /**
+   * @summary Applies an additional opacity multiplier to a color descriptor.
+   * @private
+   * @inner
+   * @param {{hex:string,alpha:number}} color Base color descriptor.
+   * @param {number} multiplier Opacity multiplier (0-1).
+   * @returns {{hex:string,alpha:number}} Adjusted color descriptor.
+   */
+  #applyOpacity(color, multiplier = 1) {
+    const safeColor = color ?? { hex: '#000000', alpha: 0 };
+    const safeMultiplier = Number.isFinite(multiplier) ? multiplier : 1;
+    return {
+      hex: safeColor.hex,
+      alpha: Math.max(0, Math.min(1, safeColor.alpha * safeMultiplier)),
+    };
+  }
+
+  /**
+   * @summary Indicates whether a color produces a visible result.
+   * @private
+   * @inner
+   * @param {{alpha:number}|null} color Color descriptor.
+   * @returns {boolean} True when the color is visible.
+   */
+  #hasVisibleColor(color) {
+    return Boolean(color && color.alpha > 0);
   }
 
   /**
@@ -506,7 +907,7 @@ class HTML2PPTX {
       style.getPropertyValue('stroke-width')
     );
     const pxWidth =
-      !Number.isNaN(borderWidth) && borderWidth > 0
+      !Number.isNaN(borderWidth) && borderWidth > HTML2PPTX.STROKE_LIMIT
         ? borderWidth
         : strokeWidth;
     return this.#pxToEmu(pxWidth);
@@ -536,25 +937,32 @@ class HTML2PPTX {
   }
 
   /**
-   * @summary Converts CSS/SVG radius definitions to EMU to keep rounded corners consistent.
+   * @summary Converts CSS/SVG radius definitions to pptx round-rect ratios.
    * @private
    * @inner
    * @param {Element} element DOM element being inspected.
    * @param {CSSStyleDeclaration} style Computed style for the element.
-   * @returns {number} Radius in EMU.
+   * @param {{width:number,height:number}} rect Bounding rectangle in pixels.
+   * @returns {number} Radius ratio between 0 and 1.
    */
-  #resolveRadius(element, style) {
+  #resolveRadius(element, style, rect) {
     const rx = parseFloat(element.getAttribute('rx'));
     const ry = parseFloat(element.getAttribute('ry'));
     const borderRadius = parseFloat(
       style.getPropertyValue('border-radius')
     );
-    const pxRadius = !Number.isNaN(borderRadius) && borderRadius > 0
-      ? borderRadius
-      : Number.isNaN(rx) || Number.isNaN(ry)
-      ? 0
-      : (rx + ry) / 2;
-    return this.#pxToEmu(pxRadius * 0.75);
+    const pxRadius =
+      !Number.isNaN(borderRadius) && borderRadius > 0
+        ? borderRadius
+        : Number.isNaN(rx) || Number.isNaN(ry)
+        ? 0
+        : (rx + ry) / 2;
+    if (!pxRadius || pxRadius <= 0) return 0;
+    const width = Number.isFinite(rect?.width) ? rect.width : pxRadius * 2;
+    const height = Number.isFinite(rect?.height) ? rect.height : pxRadius * 2;
+    const reference = 1//Math.max(1, Math.min(width, height));
+    const normalized = pxRadius / (reference / 2);
+    return Math.max(0, Math.min(1, normalized)) * 0.15;
   }
 
   /**
@@ -654,33 +1062,113 @@ class HTML2PPTX {
    * @summary Converts a DOMRect to slide EMU coordinates honoring ratios and render size.
    * @private
    * @inner
-   * @param {{x:number,y:number,width:number,height:number}} rect Bounding rectangle in client pixels.
-   * @param {{svgRect: DOMRect, viewBox: {width:number,height:number}}} context Precomputed slide context.
+   * @param {{x:number,y:number,width:number,height:number,coordinateSpace?:'svg'|'screen'}} rect Bounding rectangle.
+   * @param {{svgRect: DOMRect, viewBox: {width:number,height:number}, slideSizing: 'fit'|'viewport'}} context Precomputed slide context.
    * @returns {{x:number,y:number,w:number,h:number}} Dimensions translated to EMU.
    */
   #rectToSlideMetrics(rect, context) {
-    const { svgRect, viewBox } = context;
-    const safeWidth = svgRect.width || 1;
-    const safeHeight = svgRect.height || 1;
-    const viewWidth = viewBox.width || safeWidth;
-    const viewHeight = viewBox.height || safeHeight;
+    const { svgRect, viewBox, slideSizing } = context;
+    const safeDomWidth = svgRect.width || 1;
+    const safeDomHeight = svgRect.height || 1;
+    const rectX = rect.x ?? rect.left ?? 0;
+    const rectY = rect.y ?? rect.top ?? 0;
+    const svgX = svgRect.x ?? svgRect.left ?? 0;
+    const svgY = svgRect.y ?? svgRect.top ?? 0;
+    const rectWidth =
+      rect.width ??
+      Math.max(0, (rect.right ?? rectX) - (rect.left ?? rectX));
+    const rectHeight =
+      rect.height ??
+      Math.max(0, (rect.bottom ?? rectY) - (rect.top ?? rectY));
+    const rectSpace = rect.coordinateSpace ?? 'screen';
 
-    const domToViewBoxX = (value) =>
-      (value / safeWidth) * viewWidth;
-    const domToViewBoxY = (value) =>
-      (value / safeHeight) * viewHeight;
+    const safeViewWidth = viewBox.width || safeDomWidth || 1;
+    const safeViewHeight = viewBox.height || safeDomHeight || 1;
+    const viewMinX = viewBox.minX ?? 0;
+    const viewMinY = viewBox.minY ?? 0;
 
-    const viewX = domToViewBoxX(rect.x - svgRect.x);
-    const viewY = domToViewBoxY(rect.y - svgRect.y);
-    const viewW = domToViewBoxX(rect.width);
-    const viewH = domToViewBoxY(rect.height);
+    if (slideSizing === 'viewport') {
+      const viewWidth = viewBox.width || safeDomWidth || 1;
+      const viewHeight = viewBox.height || safeDomHeight || 1;
+      let viewX;
+      let viewY;
+      let viewW;
+      let viewH;
+      if (rectSpace === 'svg') {
+        viewX = rectX;
+        viewY = rectY;
+        viewW = rectWidth;
+        viewH = rectHeight;
+      } else {
+        const domToViewBoxX = (value) =>
+          (value / safeDomWidth) * viewWidth;
+        const domToViewBoxY = (value) =>
+          (value / safeDomHeight) * viewHeight;
+        viewX = domToViewBoxX(rectX - svgX) + viewMinX;
+        viewY = domToViewBoxY(rectY - svgY) + viewMinY;
+        viewW = domToViewBoxX(rectWidth);
+        viewH = domToViewBoxY(rectHeight);
+      }
+      const percentX = (viewX - viewMinX) / viewWidth;
+      const percentY = (viewY - viewMinY) / viewHeight;
+      return {
+        x: this.#round(percentX * this.slideWidthEmu),
+        y: this.#round(percentY * this.slideHeightEmu),
+        w: this.#round((viewW / viewWidth) * this.slideWidthEmu),
+        h: this.#round((viewH / viewHeight) * this.slideHeightEmu),
+        viewportPercentX: percentX,
+        viewportPercentY: percentY,
+      };
+    }
+
+    let viewX;
+    let viewY;
+    let viewW;
+    let viewH;
+    if (rectSpace === 'svg') {
+      viewX = rectX - viewMinX;
+      viewY = rectY - viewMinY;
+      viewW = rectWidth;
+      viewH = rectHeight;
+    } else {
+      const domToViewBoxX = (value) =>
+        (value / safeDomWidth) * safeViewWidth;
+      const domToViewBoxY = (value) =>
+        (value / safeDomHeight) * safeViewHeight;
+      viewX = domToViewBoxX(rectX - svgX);
+      viewY = domToViewBoxY(rectY - svgY);
+      viewW = domToViewBoxX(rectWidth);
+      viewH = domToViewBoxY(rectHeight);
+    }
 
     return {
-      x: this.#round((viewX / viewWidth) * this.slideWidthEmu),
-      y: this.#round((viewY / viewHeight) * this.slideHeightEmu),
-      w: this.#round((viewW / viewWidth) * this.slideWidthEmu),
-      h: this.#round((viewH / viewHeight) * this.slideHeightEmu),
+      x: this.#round((viewX / safeViewWidth) * this.slideWidthEmu),
+      y: this.#round((viewY / safeViewHeight) * this.slideHeightEmu),
+      w: this.#round((viewW / safeViewWidth) * this.slideWidthEmu),
+      h: this.#round((viewH / safeViewHeight) * this.slideHeightEmu),
     };
+  }
+
+  /**
+   * @summary Normalizes slide metrics to ensure non-negative coordinates for PPTX export.
+   * @private
+   * @inner
+   * @param {{x:number,y:number,w:number,h:number}} metrics Raw metrics.
+   * @param {{slideSizing: 'fit'|'viewport'}} context Rendering context.
+   * @returns {{x:number,y:number,w:number,h:number}} Normalized metrics.
+   */
+  #normalizeMetrics(metrics, context) {
+    if (context.slideSizing !== 'viewport') return metrics;
+    const normalized = { ...metrics };
+    if (metrics.x < 0 && typeof metrics.viewportPercentX === 'number') {
+      normalized.xPercent = (metrics.viewportPercentX * 100).toFixed(2) + '%';
+      normalized.x = 0;
+    }
+    if (metrics.y < 0 && typeof metrics.viewportPercentY === 'number') {
+      normalized.yPercent = (metrics.viewportPercentY * 100).toFixed(2) + '%';
+      normalized.y = 0;
+    }
+    return normalized;
   }
 
   /**
@@ -688,7 +1176,7 @@ class HTML2PPTX {
    * @private
    * @inner
    * @param {Element} element Element to inspect.
-   * @returns {{x:number,y:number,width:number,height:number}|null} Transformed rectangle or `null` when unavailable.
+   * @returns {{x:number,y:number,width:number,height:number,coordinateSpace:'screen'}|null} Transformed rectangle or `null` when unavailable.
    */
   #getClientRect(element) {
     if (
@@ -710,6 +1198,7 @@ class HTML2PPTX {
           y: topLeft.y,
           width: bottomRight.x - topLeft.x,
           height: bottomRight.y - topLeft.y,
+          coordinateSpace: 'screen',
         };
       } catch (error) {
         return null;
@@ -750,24 +1239,38 @@ class HTML2PPTX {
   }
 
   /**
-   * @summary Converts any CSS color value to an absolute hexadecimal string.
+   * @summary Converts any CSS color value to a hex+alpha descriptor.
+   * @static
+   * @param {string} color CSS color value.
+   * @returns {{hex:string,alpha:number}} Color descriptor.
+   */
+  static toColor(color) {
+    try {
+      if (!color) return { hex: '#000000', alpha: 0 };
+      const ctx = HTML2PPTX.#colorContext();
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      const hex =
+        '#' +
+        [r, g, b]
+          .map((channel) => channel.toString(16).padStart(2, '0'))
+          .join('');
+      return { hex, alpha: Math.max(0, Math.min(1, a / 255)) };
+    } catch (error) {
+      return { hex: '#000000', alpha: 0 };
+    }
+  }
+
+  /**
+   * @summary Backwards compatible helper returning only the hexadecimal color.
    * @static
    * @param {string} color CSS color value.
    * @returns {string} Hexadecimal color (#RRGGBB).
    */
   static toHex(color) {
-    if (!color || color === 'transparent') return '#000000';
-    const ctx = HTML2PPTX.#colorContext();
-    ctx.clearRect(0, 0, 1, 1);
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, 1, 1);
-    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
-    return (
-      '#' +
-      [r, g, b]
-        .map((channel) => channel.toString(16).padStart(2, '0'))
-        .join('')
-    );
+    return HTML2PPTX.toColor(color).hex;
   }
 
   /**
