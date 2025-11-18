@@ -10,7 +10,7 @@
  */
 /**
  * @summary Utility for converting rendered HTML/SVG slides into PPTX decks.
- * @description Works as either an ES module (`import HTML2PPTX from './SVGToPPTX.js';`) or a classic `<script>` that exposes a global constructor.
+ * @description Works as either an ES module (`import HTML2PPTX from './HTML2PPTX.js';`) or a classic `<script>` that exposes a global constructor.
  * @class HTML2PPTX
  * @module HTML2PPTX
  */
@@ -62,6 +62,8 @@ class HTML2PPTX {
    * @type {Record<'start'|'end'|'left'|'right'|'center'|'middle'|'justify', {align: string, autoFit: boolean}>} Alignment dictionary reused across slides.
    */
   static #TEXT_ALIGNS;
+
+  #pptx = null;
   /**
    * @summary Creates an exporter instance with metadata, layout definition and optional editor context.
    * @param {Object} [options={}] Configuration object.
@@ -99,25 +101,32 @@ class HTML2PPTX {
    this.slideHeightEmu = this.layout.height * HTML2PPTX.EMU_PER_IN;
    this.slideSizing = this.#normalizeSlideSizing(options.slideSizing);
   }
-
+  
   /**
    * @summary Converts DOM slides into PPTX slides.
    * @description Iterates over SVG nodes, converting each to pptxgen shapes/text. Can append to an existing presentation.
    * @param {Iterable<SVGElement>|SVGElement|null} slidesSvg Collection of SVG elements or a single SVG node.
-   * @param {Boolean} [autoDownload=true] Write and download pptx file automatically
    * @param {PptxGenJS|null} [recycle=null] Existing pptxgen instance used to append slides; when omitted a new instance is created and written to disk.
-   * @returns {PptxGenJS} The pptxgen presentation instance, useful when chaining additional operations.
+   * @returns {HTML2PPTX} The pptxgen presentation instance, useful when chaining additional operations.
    */
-  generate(slidesSvg, autoDownload = true, recycle = null) {
-    const pptx = recycle ?? this.#createPresentation();
+  generate(slidesSvg, recycle = null) {
+    this.#pptx = recycle ?? this.#createPresentation();
     const nodes = this.#normalizeSlides(slidesSvg);
     for (const svg of nodes) {
-      this.#renderSlide(pptx, svg);
+      this.#renderSlide(this.#pptx, svg);
     }
-    if (!autoDownload) {
-      pptx.writeFile({ fileName: this.fileName });
-    }
-    return pptx;
+    return this;
+  }
+
+  /**
+   * @summary Writes the pptx file.
+   * @description Writes the pptx file from the pptx in context using the fileName setted in the options.
+   * @returns {HTML2PPTX} The pptxgen presentation instance, useful when chaining additional operations.
+   */
+  download(){
+    if(!this.#pptx) return this;
+    this.#pptx.writeFile({ fileName: this.fileName });
+    return this;
   }
 
   /**
