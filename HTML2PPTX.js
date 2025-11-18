@@ -452,11 +452,23 @@ class HTML2PPTX {
       const clone = element.cloneNode(true);
       const svgWidth = Math.max(1, rect.width);
       const svgHeight = Math.max(1, rect.height);
-      const viewBoxRect = this.#rectToViewBoxRect(rect, context);
-      const viewBoxAttr = `${viewBoxRect.x} ${viewBoxRect.y} ${Math.max(
+      const transformRect = this.#parseTransformRect(
+        rect,
+        element,
+        context
+      );
+      const viewBoxRect = this.#rectToViewBoxRect(
+        transformRect ?? rect,
+        context
+      );
+      const adjustedViewBox = this.#applyInverseTransform(
+        viewBoxRect,
+        element
+      );
+      const viewBoxAttr = `${adjustedViewBox.x} ${adjustedViewBox.y} ${Math.max(
         1,
-        viewBoxRect.width
-      )} ${Math.max(1, viewBoxRect.height)}`;
+        adjustedViewBox.width
+      )} ${Math.max(1, adjustedViewBox.height)}`;
       temp.innerHTML = `<svg width="${svgWidth}" height="${svgHeight}" viewBox="${viewBoxAttr}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${clone.outerHTML}</svg>`;
       const datauri = HTML2PPTX.svgToDataURI(temp.firstElementChild);
       slide.addImage(
@@ -784,6 +796,106 @@ class HTML2PPTX {
     } catch (error) {
       return null;
     }
+  }
+
+  /**
+   * @summary Parses CSS transform values to adjust viewBox bounds.
+   * @private
+   * @inner
+   * @param {{x:number,y:number,width:number,height:number}} rect Base rectangle.
+   * @param {SVGElement} element Target SVG element.
+   * @param {{svgRect: DOMRect}} context Rendering context.
+   * @returns {{x:number,y:number,width:number,height:number}|null} Adjusted rect or null when unused.
+   */
+  #parseTransformRect(rect, element, context) {
+    const transform = element.getAttribute('transform') || element.style.transform;
+    if (!transform) return null;
+    const svgRect = context.svgRect;
+    const svgWidth = svgRect.width || 1;
+    const svgHeight = svgRect.height || 1;
+    let offsetX = rect.x;
+    let offsetY = rect.y;
+    let width = rect.width;
+    let height = rect.height;
+    const transforms = transform
+      .split(/\)\s*/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    for (const transformPart of transforms) {
+      if (transformPart.startsWith('translate')) {
+        const values = transformPart
+          .replace(/[a-z]+\(/i, '')
+          .replace(')', '')
+          .split(/[ ,]+/)
+          .map((value) => parseFloat(value));
+        offsetX += Number.isFinite(values[0])
+          ? values[0]
+          : 0;
+        offsetY += Number.isFinite(values[1])
+          ? values[1]
+          : 0;
+      } else if (transformPart.startsWith('scale')) {
+        const values = transformPart
+          .replace(/[a-z]+\(/i, '')
+          .replace(')', '')
+          .split(/[ ,]+/)
+          .map((value) => parseFloat(value));
+        const scaleX = Number.isFinite(values[0]) ? values[0] : 1;
+        const scaleY = Number.isFinite(values[1]) ? values[1] : scaleX;
+        width *= scaleX;
+        height *= scaleY;
+      }
+    }
+    return {
+      x: (offsetX / svgWidth) * svgRect.width,
+      y: (offsetY / svgHeight) * svgRect.height,
+      width,
+      height,
+    };
+  }
+
+  /**
+   * @summary Applies inverse transform factors to viewBox coordinates.
+   * @private
+   * @inner
+   * @param {{x:number,y:number,width:number,height:number}} viewBoxRect ViewBox rectangle.
+   * @param {SVGElement} element Target SVG element.
+   * @returns {{x:number,y:number,width:number,height:number}} Corrected viewBox rectangle.
+   */
+  #applyInverseTransform(viewBoxRect, element) {
+    const transform = element.getAttribute('transform') || element.style.transform;
+    if (!transform) return viewBoxRect;
+    let { x, y, width, height } = viewBoxRect;
+    const transforms = transform
+      .split(/\)\s*/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    for (const transformPart of transforms) {
+      if (transformPart.startsWith('translate')) {
+        const values = transformPart
+          .replace(/[a-z]+\(/i, '')
+          .replace(')', '')
+          .split(/[ ,]+/)
+          .map((value) => parseFloat(value));
+        x -= Number.isFinite(values[0]) ? values[0] : 0;
+        y -= Number.isFinite(values[1]) ? values[1] : 0;
+      } else if (transformPart.startsWith('scale')) {
+        const values = transformPart
+          .replace(/[a-z]+\(/i, '')
+          .replace(')', '')
+          .split(/[ ,]+/)
+          .map((value) => parseFloat(value));
+        const scaleX = Number.isFinite(values[0]) ? values[0] : 1;
+        const scaleY = Number.isFinite(values[1]) ? values[1] : scaleX;
+        if (scaleX !== 0) {
+          width /= scaleX;
+        }
+        if (scaleY !== 0) {
+          height /= scaleY;
+        }
+      }
+    }
+    return { x, y, width, height };
   }
 
 
