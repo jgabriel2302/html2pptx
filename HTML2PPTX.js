@@ -1,7 +1,7 @@
 'use strict';
 /**
  * @file HTML2PPTX.js
- * @summary Helper utilities for exporting the LATAM Padronização slides to PowerPoint.
+ * @summary Helper utilities for exporting any SVG/HTML layout to Microsoft PowerPoint using PptxGenJS.
  * @description Single-class implementation that reads rendered SVG/table content and recreates it via pptxgen.js, ready for use in browsers, CommonJS, AMD or ES-module environments.
  *
  * @author João Gabriel Corrêa da Silva (https://github.com/jgabriel2302/)
@@ -395,7 +395,7 @@ class HTML2PPTX {
           y: metrics.y,
           h: metrics.h,
           w: metrics.w,
-          altText: 'Logo ArcelorMittal',
+          altText: 'Logo or Image',
           sizing: { type: 'contain' },
         })
       );
