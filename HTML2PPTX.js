@@ -106,11 +106,10 @@ class HTML2PPTX {
    * @summary Converts DOM slides into PPTX slides.
    * @description Iterates over SVG nodes, converting each to pptxgen shapes/text. Can append to an existing presentation.
    * @param {Iterable<SVGElement>|SVGElement|null} slidesSvg Collection of SVG elements or a single SVG node.
-   * @param {PptxGenJS|null} [recycle=null] Existing pptxgen instance used to append slides; when omitted a new instance is created and written to disk.
-   * @returns {HTML2PPTX} The pptxgen presentation instance, useful when chaining additional operations.
+   * @returns {HTML2PPTX} The HTML2PPTX instance, useful when chaining additional operations.
    */
-  generate(slidesSvg, recycle = null) {
-    this.#pptx = recycle ?? this.#createPresentation();
+  generate(slidesSvg) {
+    this.#pptx = this.#pptx ?? this.#createPresentation();
     const nodes = this.#normalizeSlides(slidesSvg);
     for (const svg of nodes) {
       this.#renderSlide(this.#pptx, svg);
@@ -121,7 +120,7 @@ class HTML2PPTX {
   /**
    * @summary Writes the pptx file.
    * @description Writes the pptx file from the pptx in context using the fileName setted in the options.
-   * @returns {HTML2PPTX} The pptxgen presentation instance, useful when chaining additional operations.
+   * @returns {HTML2PPTX} The HTML2PPTX instance, useful when chaining additional operations.
    */
   download(){
     if(!this.#pptx) return this;
@@ -487,12 +486,6 @@ class HTML2PPTX {
     }
 
     if (tag === 'RECT') {
-      console.log({
-        element,
-        fill: this.#solidFill(colors.fill),
-        ...this.#lineOptions(colors.stroke, borderWidth, dashType),
-        ...(radius === 0 ? {} : { rectRadius: radius }),
-      })
       slide.addShape(
         radius === 0 ? pptx.ShapeType.rect : pptx.ShapeType.roundRect,
         this.#applyPercentPosition({
