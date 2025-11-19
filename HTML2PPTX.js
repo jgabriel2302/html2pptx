@@ -487,6 +487,12 @@ class HTML2PPTX {
     }
 
     if (tag === 'RECT') {
+      console.log({
+        element,
+        fill: this.#solidFill(colors.fill),
+        ...this.#lineOptions(colors.stroke, borderWidth, dashType),
+        ...(radius === 0 ? {} : { rectRadius: radius }),
+      })
       slide.addShape(
         radius === 0 ? pptx.ShapeType.rect : pptx.ShapeType.roundRect,
         this.#applyPercentPosition({
@@ -596,7 +602,7 @@ class HTML2PPTX {
    * @returns {{line:{color:string,width:number,dashType:string,transparency:number}}|{}} Line object or empty object when suppressed.
    */
   #lineOptions(color, width, dashType) {
-    if (!width || width <= HTML2PPTX.STROKE_LIMIT) return {};
+    if (!Number.isFinite(width) || width <= 0) return {};
     return {
       line: {
         color: color?.hex ?? '#000000',
@@ -1041,17 +1047,20 @@ class HTML2PPTX {
    * @returns {number} Stroke width expressed in EMU.
    */
   #resolveBorderWidth(style) {
-    const borderWidth = parseFloat(
-      style.getPropertyValue('border-width')
-    );
     const strokeWidth = parseFloat(
       style.getPropertyValue('stroke-width')
     );
-    const pxWidth =
-      !Number.isNaN(borderWidth) && borderWidth > HTML2PPTX.STROKE_LIMIT
-        ? borderWidth
-        : strokeWidth;
-    return this.#pxToEmu(pxWidth);
+    const borderWidth = parseFloat(
+      style.getPropertyValue('border-width')
+    );
+    const pxWidth = [strokeWidth, borderWidth].find(
+      (value) => Number.isFinite(value) && value > 0
+    );
+    if (!Number.isFinite(pxWidth) || pxWidth <= 0) return 0;
+    const emuWidth = this.#pxToEmu(pxWidth);
+    if (emuWidth <= HTML2PPTX.STROKE_LIMIT) return 0;
+    const pptxWidth = Math.round(this.#pxToPoints(pxWidth));
+    return Math.max(1, Math.min(256, pptxWidth));
   }
 
   /**
