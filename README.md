@@ -26,7 +26,7 @@ Helper utilities for exporting any SVG/HTML layout to Microsoft PowerPoint using
   });
 
   const slides = document.querySelectorAll('#result svg');
-  exporter.generate(slides); // triggers download
+  exporter.generate(slides).download(); // triggers download
 </script>
 ```
 
@@ -39,7 +39,7 @@ const HTML2PPTX = require('./SVGToPPTX.js');
 const exporter = new HTML2PPTX({ title: 'Report' });
 
 // Use jsdom/puppeteer to render your SVG before calling:
-exporter.generate(svgNodes, existingPptx); // returns the pptxgen instance
+exporter.generate(svgNodes, existingPptx).download(); // returns the pptxgen instance
 ```
 
 ### ES Modules / Bundlers
@@ -48,7 +48,7 @@ exporter.generate(svgNodes, existingPptx); // returns the pptxgen instance
 import HTML2PPTX from './SVGToPPTX.js';
 
 const exporter = new HTML2PPTX({ title: 'Report' });
-exporter.generate(document.querySelectorAll('#result svg'));
+exporter.generate(document.querySelectorAll('#result svg')).download();
 ```
 
 ## API Highlights
