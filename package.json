@@ -1,0 +1,42 @@
+{
+  "name": "html2pptx",
+  "version": "0.0.1",
+  "description": "Helper utilities for exporting any SVG/HTML layout to Microsoft PowerPoint using PptxGenJS",
+  "main": "HTML2PPTX.js",
+  "module": "HTML2PPTX.js",
+  "exports": {
+    ".": "./HTML2PPTX.js"
+  },
+  "files": [
+    "HTML2PPTX.js"
+  ],
+  "scripts": {
+    "build": "echo No build step required",
+    "test": "echo No automated tests specified"
+  },
+  "keywords": [
+    "pptx",
+    "pptxgenjs",
+    "html",
+    "export",
+    "slides"
+  ],
+  "author": "Joao Gabriel Correa da Silva",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jgabriel2302/html2pptx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jgabriel2302/html2pptx/issues"
+  },
+  "homepage": "https://github.com/jgabriel2302/html2pptx#readme",
+  "peerDependencies": {
+    "pptxgenjs": "^3.14.0"
+  },
+  "packageManager": "yarn@4.3.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
